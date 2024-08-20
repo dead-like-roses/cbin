@@ -16,10 +16,15 @@
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 enum editor_key {
-	ARROW_LEFT = 'h',
-	ARROW_RIGHT = 'l',
-	ARROW_UP = 'k',
-	ARROW_DOWN = 'j'
+	ARROW_LEFT = 1000,
+	ARROW_RIGHT,
+	ARROW_UP,
+	ARROW_DOWN,
+	HOME_KEY,
+	END_KEY,
+	PAGE_UP,
+	PAGE_DOWN,
+	DELETE_KEY
 };
 
 /*** data ***/
@@ -66,7 +71,7 @@ void enable_rawmode() {
 		die("tcsetattr");
 }
 
-char editor_read_key() {
+int editor_read_key() {
 	int nread = 0;
 	char c;
 	while((nread = read(STDIN_FILENO, &c, 1)) != 1) {
@@ -80,13 +85,36 @@ char editor_read_key() {
 		if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
 
 		if (seq[0] == '[') {
+			if (seq[1] >= '0' && seq[1] <= '9') {
+				if (read(STDIN_FILENO, &seq[2], 1) != 1) return '\x1b';
+				if (seq[2] == '~') {
+					switch (seq[1]) {
+						case '1': return HOME_KEY;
+						case '3': return DELETE_KEY;
+						case '4': return END_KEY;
+						case '5': return PAGE_UP;
+						case '6': return PAGE_DOWN;
+						case '7': return HOME_KEY; 
+						case '8': return END_KEY;
+					}
+				}
+			} else {
+				switch (seq[1]) {
+					case 'A': return ARROW_UP;
+					case 'B': return ARROW_DOWN;
+					case 'C': return ARROW_RIGHT;
+					case 'D': return ARROW_LEFT;
+					case 'F': return END_KEY;
+					case 'H': return HOME_KEY;
+				}
+			}
+		} else if (seq[0] == 'O') {
 			switch (seq[1]) {
-				case 'A': return ARROW_UP;
-				case 'B': return ARROW_DOWN;
-				case 'C': return ARROW_RIGHT;
-				case 'D': return ARROW_LEFT;
+				case 'H': return HOME_KEY;
+				case 'F': return END_KEY;
 			}
 		}
+
 		return '\x1b';
 	} else {
 		return c;
@@ -150,32 +178,54 @@ void ab_free(struct abuf *ab) {
 
 /*** input ***/ 
 
-void editor_move_cursor(char key) {
+void editor_move_cursor(int key) {
 	switch (key) {
 		case ARROW_LEFT:
-			state.cx--;
+			if (state.cx != 0) {
+				state.cx--;
+			}
 			break;
 		case ARROW_DOWN:
-			state.cy++;
+			if (state.cy != state.rows -1) {
+				state.cy++;
+			}
 			break;
 		case ARROW_UP:
-			state.cy--;
+			if (state.cy != 0) {
+				state.cy--;
+			}
 			break;
 		case ARROW_RIGHT:
-			state.cx++;
+			if (state.cx != state.columns -1) {
+				state.cx++;
+			}
 			break;
 	}
 }
 
 void editor_process_key() {
-	char c = editor_read_key();
+	int c = editor_read_key();
 	switch (c) {
 		case 'q':
 			write(STDOUT_FILENO, "\x1b[2J", 4);
 			write(STDOUT_FILENO, "\x1b[H", 3);
 			exit(0);
 			break;
-
+		case HOME_KEY:
+			state.cx = 0;
+			break;
+		case END_KEY:
+			state.cx = state.columns - 1;
+			break;
+		case PAGE_UP:
+		case PAGE_DOWN:
+			{
+				int times = state.rows;
+				while (times--) {
+					editor_move_cursor(c == PAGE_UP ? ARROW_UP : ARROW_DOWN);
+				}
+			}
+			break;
 		case ARROW_LEFT:
 		case ARROW_DOWN:
 		case ARROW_UP:
@@ -229,7 +279,6 @@ void editor_refresh_screen() {
 	ab_append(&ab, "\x1b[?25h", 6);
 
 	write(STDOUT_FILENO, ab.b, ab.len);
-//	printf("ab.b: %s", ab.b);
 	ab_free(&ab);
 }
 
@@ -246,9 +295,6 @@ void init_editor() {
 
 int main() {	
 	enable_rawmode();
-
-
-
 	init_editor();
 
 	while(1) {
